@@ -152,6 +152,17 @@ main.wide .pad{max-width:640px}
 .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw;text-align:center;z-index:20}
 .toast.show{opacity:1}
 
+/* ---------- câmera ---------- */
+.cam{position:fixed;inset:0;background:#000;z-index:30;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.cam video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.cam-guide{position:relative;width:min(86vw,64vh);aspect-ratio:1;border-radius:18px;border:2px solid rgba(255,255,255,.9);box-shadow:0 0 0 100vmax rgba(0,0,0,.45)}
+.cam-tip{position:absolute;top:max(24px,env(safe-area-inset-top));left:0;right:0;margin:0;text-align:center;color:#fff;font-size:14px}
+.cam-bar{position:absolute;left:0;right:0;bottom:max(28px,env(safe-area-inset-bottom));display:flex;justify-content:space-around;align-items:center}
+.cam-btn{color:#fff;background:rgba(255,255,255,.14)}
+.cam-btn:hover{background:rgba(255,255,255,.24)}
+.shutter{width:70px;height:70px;border-radius:50%;background:#fff;box-shadow:0 0 0 4px #000,0 0 0 7px #fff;transition:transform .1s}
+.shutter:active{transform:scale(.92)}
+
 /* ---------- foto ---------- */
 .sub{color:var(--muted);font-size:14px;margin:0 0 12px;line-height:1.5}
 #cropCanvas{display:block;margin:0 auto;max-width:100%;max-height:60vh;touch-action:none;border-radius:14px;background:#000}
@@ -170,7 +181,7 @@ main.wide .pad{max-width:640px}
     <h1 class="brand"><img src="icon.svg" alt="">Sudoku</h1>
     <div class="row">
       <button class="icon" id="btnInstall" title="Instalar app" hidden><i data-i="download"></i></button>
-      <button class="icon" id="btnPhoto" title="Importar de uma foto"><i data-i="camera"></i></button>
+      <button class="icon" id="btnPhoto" title="Fotografar um sudoku"><i data-i="camera"></i></button>
       <button class="icon" id="btnManual" title="Digitar um sudoku"><i data-i="grid"></i></button>
     </div>
   </header>
@@ -233,7 +244,18 @@ main.wide .pad{max-width:640px}
 
 </main>
 
-<input id="fileInput" type="file" accept="image/*" hidden>
+<input id="fileInput" type="file" accept="image/*" capture="environment" hidden>
+
+<div class="cam" id="camera" hidden>
+  <video id="camVideo" playsinline muted autoplay></video>
+  <div class="cam-guide"></div>
+  <p class="cam-tip">Enquadre a grade dentro do quadrado</p>
+  <div class="cam-bar">
+    <button class="icon cam-btn" id="camClose" title="Fechar"><i data-i="x"></i></button>
+    <button class="shutter" id="camShot" title="Tirar foto"></button>
+    <span style="width:42px"></span>
+  </div>
+</div>
 
 <div class="scrim" id="sheet" hidden>
   <div class="sheet">
@@ -857,7 +879,8 @@ $('#hRestart').addEventListener('click', restart);
 // ---------- Teclado ----------
 document.addEventListener('keydown', e => {
   if (!$('#askDlg').hidden || !$('#doneDlg').hidden) return;
-  if (e.key === 'Escape') { closeSheet(); return; }
+  if (e.key === 'Escape') { closeSheet(); if (camStream) stopCamera(); return; }
+  if (camStream) { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); takePhoto(); } return; }
   if (current !== 'game' && current !== 'review') return;
   const st = current === 'game' ? game : rv, n = current === 'game' ? game.n : 9;
   let d = 0;
@@ -1254,7 +1277,38 @@ $('#btnRecognize').addEventListener('click', () => recognize().catch(e => {
   $('#cropStatus').textContent = 'Erro ao processar a imagem.';
 }));
 $('#cropBack').addEventListener('click', goHome);
-$('#btnPhoto').addEventListener('click', () => $('#fileInput').click());
+// ---------- Câmera ----------
+let camStream = null;
+function stopCamera() {
+  if (camStream) camStream.getTracks().forEach(t => t.stop());
+  camStream = null; $('#camVideo').srcObject = null; $('#camera').hidden = true;
+}
+async function openCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { $('#fileInput').click(); return; }
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false,
+    });
+  } catch (e) {
+    // sem permissão / sem câmera: usa a câmera do sistema (o input já pede captura direta)
+    $('#fileInput').click(); return;
+  }
+  const v = $('#camVideo'); v.srcObject = camStream;
+  $('#camera').hidden = false;
+  try { await v.play(); } catch (e) {}
+}
+function takePhoto() {
+  const v = $('#camVideo');
+  if (!v.videoWidth) return;
+  const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  stopCamera();
+  loadPhoto(c.toDataURL('image/jpeg', 0.92)).catch(() => toast('Não consegui processar a foto'));
+}
+$('#btnPhoto').addEventListener('click', openCamera);
+$('#camShot').addEventListener('click', takePhoto);
+$('#camClose').addEventListener('click', stopCamera);
+document.addEventListener('visibilitychange', () => { if (document.hidden && camStream) stopCamera(); });
 $('#fileInput').addEventListener('change', e => {
   const f = e.target.files[0]; e.target.value = '';
   if (f) loadPhoto(URL.createObjectURL(f)).catch(() => toast('Não consegui abrir essa imagem'));
